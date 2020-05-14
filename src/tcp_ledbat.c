@@ -139,7 +139,7 @@ static void tcp_ledbat_init(struct sock *sk)
 	ledbat->flag = 0;
 	ledbat->snd_cwnd_cnt = 0;
 	ledbat->last_ack = 0;
-	ledbat->slowdowm_start=0;
+	ledbat->slowdown_start=0;
 	ledbat->slowdown_end=0;
 	ledbat->num_rtts=0;
 	ledbat->init_slowdown=true;
@@ -195,10 +195,13 @@ static void print_delay(struct owd_circ_buf *cb, char *name)
 static
 u32 tcp_ledbat_ssthresh(struct sock *sk)
 {
+	u32 res;
+
+	struct ledbat *ledbat = inet_csk_ca(sk);
 	ledbat->flag &= ~LEDBAT_SLOWDOWN;
 	ledbat->flag &= ~LEDBAT_SLOWDOWN_SS;
-	num_rtts=0;
-	u32 res;
+	ledbat->num_rtts=0;
+	
 	switch (do_ss) {
 	case DO_NOT_SLOWSTART:
 	case DO_SLOWSTART:
@@ -218,17 +221,20 @@ u32 tcp_ledbat_ssthresh(struct sock *sk)
 
 u32 tcp_ledbat_slow_start(struct tcp_sock *tp, u32 acked, u32 base_delay)
 {
-	u32 ss_factor = 2*target;
-	do_div(ss_factor,base_delay)
+	u32 cwnd;
+	u32 ss_factor;
+	ss_factor = 2*target;
+	do_div(ss_factor,base_delay);
 	if(ss_factor>16)
 	ss_factor=16;
 	
 	do_div(acked,ss_factor);
-	u32 cwnd = tp->snd_cwnd + acked;
+
+	cwnd = tp->snd_cwnd + acked;
 	acked =0;
-	if(cwnd>= tp->ss_thresh)
+	if(cwnd>= tp->snd_ssthresh)
 	{
-		cwnd = tp->ss_thresh;
+		cwnd = tp->snd_ssthresh;
 		acked=1;
 	}
 	
@@ -314,7 +320,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			ledbat->flag |= LEDBAT_SLOWDOWN;
 			ledbat->new_slowdown_start = tcp_time_stamp(tp);
 			ledbat->init_slowdown=false;
-			tp->ss_thresh = tp->snd_cwnd;
+			tp->snd_ssthresh = tp->snd_cwnd;
 			tp->snd_cwnd=min_cwnd;
 			return;
 		}
@@ -329,7 +335,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	{
 		ledbat->flag |= LEDBAT_SLOWDOWN;
 		ledbat->new_slowdown_start = tcp_time_stamp(tp);
-		tp->ss_thresh = tp->snd_cwnd;
+		tp->snd_ssthresh = tp->snd_cwnd;
 		tp->snd_cwnd=min_cwnd;
 		return;
 	}
@@ -523,7 +529,7 @@ static void tcp_ledbat_pkts_acked(struct sock *sk,
 		tp->snd_cwnd = min_cwnd;
 		ledbat->flag &= ~LEDBAT_SLOWDOWN;
 		ledbat->flag &= ~LEDBAT_SLOWDOWN_SS;
-		num_rtts=0;
+		ledbat->num_rtts=0;
 	}
 	ledbat->last_ack = tcp_time_stamp(tp);
 
