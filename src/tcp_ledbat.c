@@ -21,14 +21,22 @@
 #define  DEBUG_NOISE_FILTER  1
 #define  DEBUG_BASE_HISTO    1
 
+
 /* NOTE: len are the actual length - 1 */
 static int base_histo_len = 10;
 static int noise_filter_len = 4;
 static int target = 100;
 static int gain_num = 1;
 static int gain_den = 1;
-static int do_ss = 0;
+static int do_ss = 1;
 static int ledbat_ssthresh = 0xffff;
+static int allowed_increase = 1;
+static int const_factor_num = 1;
+static int const_factor_den = 2;
+static int min_cwnd = 2;
+// static int num_rtts = 0;
+// static bool init_slowdown = true;
+// static unsigned int new_slowdown_start = 0;
 
 module_param(base_histo_len, int, 0644);
 MODULE_PARM_DESC(base_histo_len, "length of the base history vector");
@@ -50,6 +58,10 @@ module_param(do_ss, int, 0644);
 MODULE_PARM_DESC(do_ss, "do slow start: 0 no, 1 yes, 2 with_ssthresh");
 module_param(ledbat_ssthresh, int, 0644);
 MODULE_PARM_DESC(ledbat_ssthresh, "slow start threshold");
+MODULE_PARM_DESC(allowed_increase, "factor by which max_cwnd can increase");
+MODULE_PARM_DESC(const_factor_num, "multiplicative factor of constant");
+MODULE_PARM_DESC(const_factor_den, "multiplicative factor of constant");
+MODULE_PARM_DESC(min_cwnd, "lower limit of cwnd");
 
 struct owd_circ_buf {
 	u32 *buffer;
@@ -72,6 +84,8 @@ enum tcp_ledbat_state {
 	LEDBAT_VALID_OWD = (1 << 1),
 	LEDBAT_INCREASING = (1 << 2),
 	LEDBAT_CAN_SS = (1 << 3),
+	LEDBAT_SLOWDOWN = (1 << 4),
+	LEDBAT_SLOWDOWN_SS = (1 << 5),
 };
 
 /**
@@ -81,6 +95,11 @@ struct ledbat {
 	u32 last_rollover;
 	u32 snd_cwnd_cnt;	/* already in struct tcp_sock but we need 32 bits. */
 	u32 last_ack;
+	u32 slowdown_start;
+	u32 slowdown_end;
+	u32 num_rtts;
+	bool init_slowdown;
+	u32 new_slowdown_start;
 	struct owd_circ_buf base_history;
 	struct owd_circ_buf noise_filter;
 	u32 flag;
@@ -120,6 +139,11 @@ static void tcp_ledbat_init(struct sock *sk)
 	ledbat->flag = 0;
 	ledbat->snd_cwnd_cnt = 0;
 	ledbat->last_ack = 0;
+	ledbat->slowdowm_start=0;
+	ledbat->slowdown_end=0;
+	ledbat->num_rtts=0;
+	ledbat->init_slowdown=true;
+	ledbat->new_slowdown_start=0;
 
 	if (do_ss) {
 		ledbat->flag |= LEDBAT_CAN_SS;
@@ -171,6 +195,9 @@ static void print_delay(struct owd_circ_buf *cb, char *name)
 static
 u32 tcp_ledbat_ssthresh(struct sock *sk)
 {
+	ledbat->flag &= ~LEDBAT_SLOWDOWN;
+	ledbat->flag &= ~LEDBAT_SLOWDOWN_SS;
+	num_rtts=0;
 	u32 res;
 	switch (do_ss) {
 	case DO_NOT_SLOWSTART:
@@ -185,6 +212,31 @@ u32 tcp_ledbat_ssthresh(struct sock *sk)
 
 	return res;
 }
+/**
+ * tcp_ledbat_slow_start
+ */
+
+u32 tcp_ledbat_slow_start(struct tcp_sock *tp, u32 acked, u32 base_delay)
+{
+	u32 ss_factor = 2*target;
+	do_div(ss_factor,base_delay)
+	if(ss_factor>16)
+	ss_factor=16;
+	
+	do_div(acked,ss_factor);
+	u32 cwnd = tp->snd_cwnd + acked;
+	acked =0;
+	if(cwnd>= tp->ss_thresh)
+	{
+		cwnd = tp->ss_thresh;
+		acked=1;
+	}
+	
+	tp->snd_cwnd = min(cwnd, tp->snd_cwnd_clamp);
+
+	return acked;
+}
+
 
 /**
  * tcp_ledbat_cong_avoid
@@ -206,7 +258,11 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (!(ledbat->flag & LEDBAT_VALID_OWD))
 		return;
 
-	max_cwnd = ((u32) (tp->snd_cwnd)) * target;
+	/******************** change ***********************/
+	//max_cwnd = ((u32) (tp->snd_cwnd)) * target;
+	max_cwnd = tcp_packets_in_flight(tp) + allowed_increase;
+	base_delay = ((s64) ledbat_base_delay(ledbat));
+	/******************** change ***********************/
 
 	/* 
 	   This checks that we are not limited by the congestion window nor by the
@@ -216,37 +272,84 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (!tcp_is_cwnd_limited(sk))
 		return;
 
-	if (tp->snd_cwnd <= 1)
+	if (tp->snd_cwnd <= min_cwnd)
 		ledbat->flag |= LEDBAT_CAN_SS;
+	
+	if(ledbat->flag & LEDBAT_SLOWDOWN)
+	{
+			ledbat->flag &= ~LEDBAT_SLOWDOWN;
+			ledbat->flag |= LEDBAT_SLOWDOWN_SS;
+			tp->snd_cwnd = min_cwnd;
+			return;
+	}
 
-	if (do_ss >= DO_SLOWSTART && tp->snd_cwnd <= tcp_ledbat_ssthresh(sk) &&
+	if (do_ss >= DO_SLOWSTART && tcp_in_slow_start(tp) &&
 	    (ledbat->flag & LEDBAT_CAN_SS)) {
 #if DEBUG_SLOW_START
 		printk(KERN_DEBUG
 		       "slow_start!!! clamp %d cwnd %d sshthresh %d \n",
 		       tp->snd_cwnd_clamp, tp->snd_cwnd, tp->snd_ssthresh);
 #endif
-		acked = tcp_slow_start(tp, acked);
+		acked = tcp_ledbat_slow_start(tp, acked, (u32)base_delay);
 		if (!acked)
 			return;
 	} else {
 		ledbat->flag &= ~LEDBAT_CAN_SS;
 	}
 
+	/*********** change **************/
+	if(ledbat->flag & LEDBAT_SLOWDOWN_SS)
+	{
+		ledbat->slowdown_start = ledbat->new_slowdown_start;
+		ledbat->slowdown_end = tcp_time_stamp(tp);
+		ledbat->flag &= ~LEDBAT_SLOWDOWN_SS;
+	}
+
+
+	if(ledbat->init_slowdown && !tcp_in_initial_slowstart(tp))
+	{
+		if(ledbat->num_rtts >0)
+		{
+			ledbat->num_rtts=0;
+			ledbat->flag |= LEDBAT_SLOWDOWN;
+			ledbat->new_slowdown_start = tcp_time_stamp(tp);
+			ledbat->init_slowdown=false;
+			tp->ss_thresh = tp->snd_cwnd;
+			tp->snd_cwnd=min_cwnd;
+			return;
+		}
+		else
+		{
+			ledbat->num_rtts++;
+		}
+		
+	}
+
+	if(!(ledbat->init_slowdown) && (tcp_time_stamp(tp)-(ledbat->slowdown_end)) >= (9*((ledbat->slowdown_end) - (ledbat->slowdown_start))))
+	{
+		ledbat->flag |= LEDBAT_SLOWDOWN;
+		ledbat->new_slowdown_start = tcp_time_stamp(tp);
+		tp->ss_thresh = tp->snd_cwnd;
+		tp->snd_cwnd=min_cwnd;
+		return;
+	}
+	/*********** change *************/
+
 	/* This allows to eventually define new filters for the current delay. */
 	current_delay =
 	    ((s64) ledbat_current_delay(ledbat, &ledbat_min_circ_buff));
-	base_delay = ((s64) ledbat_base_delay(ledbat));
+	
 
 	queue_delay = current_delay - base_delay;
 	offset = ((s64) target) - (queue_delay);
 
-	offset *= gain_num;
-	do_div(offset, gain_den);
+	
 
 	/* Do not ramp more than TCP. */
-	if (offset > target)
-		offset = target;
+	/***************** change ***************/
+	// if (offset > target)
+	// 	offset = target;
+	/***************** change ***************/
 
 #if DEBUG_DELAY
 	printk(KERN_DEBUG
@@ -256,26 +359,41 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	       tp->snd_cwnd, current_delay, base_delay);
 #endif
 
-	/* calculate the new cwnd_cnt */
-	cwnd = ledbat->snd_cwnd_cnt + offset;
-	if (cwnd >= 0) {
-		/* if we have a positive number update the cwnd_count */
-		ledbat->snd_cwnd_cnt = cwnd;
-		if (ledbat->snd_cwnd_cnt >= max_cwnd) {
+	if(queue_delay<=target)
+	{
+		offset = gain_num;
+		do_div(offset, gain_den);
+	}
+	else
+	{
+		offset*= (tp->snd_cwnd)*const_factor_num;
+		do_div(offset,const_factor_den);
+		do_div(offset,target);			
+	}
+	
+
+	/* calculate the new cwnd */	
+	cwnd = tp->snd_cwnd + offset;
+	if (cwnd >= min_cwnd) {
+		/* if we have a positive number update the cwnd */
+		tp->snd_cwnd = cwnd;
+		if (tp->snd_cwnd >= tp->snd_cwnd_clamp)
+				tp->snd_cwnd = tp->snd_cwnd_clamp - 1;
+		if (tp->snd_cwnd > max_cwnd) {
 			/* increase the cwnd */
-			if (tp->snd_cwnd < tp->snd_cwnd_clamp)
-				tp->snd_cwnd++;
+			tp->snd_cwnd = max_cwnd;
 			ledbat->snd_cwnd_cnt = 0;
 		}
 	} else {
 		/* we need to decrease the cwnd but we do not want to set it to 0! */
-		if (tp->snd_cwnd > 1) {
-			tp->snd_cwnd--;
-			/* set the cwnd_cnt to the max value - target */
-			ledbat->snd_cwnd_cnt = (tp->snd_cwnd - 1) * target;
-		} else {
-			tp->snd_cwnd_cnt = 0;
-		}
+		// if (tp->snd_cwnd > 2) {
+		// 	tp->snd_cwnd = ;
+		// 	/* set the cwnd_cnt to the max value - target */
+		// 	ledbat->snd_cwnd_cnt = (tp->snd_cwnd - 1) * target;
+		// } else {
+		// 	tp->snd_cwnd_cnt = 0;
+		// }
+		tp->snd_cwnd = min_cwnd;
 	}
 
 }
@@ -402,7 +520,10 @@ static void tcp_ledbat_pkts_acked(struct sock *sk,
 		   Set the congestion window to 1. */
 	        printk(KERN_DEBUG "resetting snd_cwnd tcp_time_stamp(tp) %u, last_ack %u, srtt %lu\n",
 				tcp_time_stamp(tp), ledbat->last_ack, (tp->srtt_us>>3)/(USEC_PER_SEC/TCP_TS_HZ));
-		tp->snd_cwnd = 1;
+		tp->snd_cwnd = min_cwnd;
+		ledbat->flag &= ~LEDBAT_SLOWDOWN;
+		ledbat->flag &= ~LEDBAT_SLOWDOWN_SS;
+		num_rtts=0;
 	}
 	ledbat->last_ack = tcp_time_stamp(tp);
 
