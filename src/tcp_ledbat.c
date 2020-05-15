@@ -24,8 +24,6 @@
 static int base_histo_len = 10;
 static int noise_filter_len = 4;
 static int target = 100;
-static int gain_num = 1;
-static int gain_den = 1;
 static int do_ss = 1;
 static int ledbat_ssthresh = 0xffff;
 static int ledbat_pp_ai_const_num =1;
@@ -38,10 +36,6 @@ module_param(noise_filter_len, int, 0644);
 MODULE_PARM_DESC(noise_filter_len, "length of the noise_filter vector");
 module_param(target, int, 0644);
 MODULE_PARM_DESC(target, "target queuing delay");
-module_param(gain_num, int, 0644);
-MODULE_PARM_DESC(gain_num, "multiplicative factor of the gain");
-module_param(gain_den, int, 0644);
-MODULE_PARM_DESC(gain_den, "multiplicative factor of the gain");
 
 /* Our extensions to play with slow start */
 #define DO_NOT_SLOWSTART            0
@@ -181,7 +175,7 @@ static
 u32 tcp_ledbat_ssthresh(struct sock *sk)
 {
 	u32 res;
-	const struct ledbat *ledbat  = inet_csk_ca(sk);
+	struct ledbat *ledbat  = inet_csk_ca(sk);
 	ledbat->flag &= ~LEDBAT_SLOWDOWN;
 	switch (do_ss) {
 	case DO_NOT_SLOWSTART:
@@ -198,6 +192,37 @@ u32 tcp_ledbat_ssthresh(struct sock *sk)
 }
 
 /**
+ * tcp_ledbat_slow_start
+ */
+
+u32 tcp_ledbat_slow_start(struct tcp_sock *tp, u32 acked, u32 base_delay, u32 gain)
+{
+	u32 cwnd;
+	u32 inc;
+	inc = gain*(tp->snd_ssthresh - tp->snd_cwnd);
+	
+	if(acked<=inc)
+	{
+		acked-=inc;
+		cwnd= tp->snd_ssthresh;
+	}
+
+	else{
+		inc = do_div(acked,gain);
+		if(inc)
+		acked++;
+		cwnd= tp->snd_cwnd + acked;
+		acked=0;
+	}
+	
+	
+	tp->snd_cwnd = min(cwnd, tp->snd_cwnd_clamp);
+
+	return acked;
+}
+
+
+/**
  * tcp_ledbat_cong_avoid
  */
 static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
@@ -209,6 +234,8 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	s64 queue_delay;
 	s64 offset;
 	s64 cwnd;
+	u32 rem;
+	u32 gain_den;
 	u32 max_cwnd;
 	s64 current_delay;
 	s64 base_delay;
@@ -216,6 +243,19 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	/*if no valid data return */
 	if (!(ledbat->flag & LEDBAT_VALID_OWD))
 		return;
+
+	
+
+	
+	base_delay = ((s64) ledbat_base_delay(ledbat));
+
+	/* calculating gain*/
+	gain_den = 2*target;
+	rem = do_div(gain_den, base_delay);
+	if(rem)
+	gain_den++;
+	if(gain_den>16)
+	gain_den=16;
 
 	max_cwnd = ((u32) (tp->snd_cwnd)) * target * gain_den * ledbat_pp_ai_const_den;
 
@@ -229,7 +269,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
     if(ledbat->flag & LEDBAT_SLOWDOWN)
     {
-        ledbat->snd_cwnd = min_cwnd;
+        tp->snd_cwnd = min_cwnd;
         if(!after(tcp_time_stamp(tp), ledbat->slowdown_start + 2*((tp->srtt_us >> 3)/(USEC_PER_SEC/TCP_TS_HZ))))
         return;
     }
@@ -244,7 +284,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		       "slow_start!!! clamp %d cwnd %d sshthresh %d \n",
 		       tp->snd_cwnd_clamp, tp->snd_cwnd, tp->snd_ssthresh);
 #endif
-		acked = tcp_slow_start(tp, acked);
+		acked = tcp_ledbat_slow_start(tp, acked, base_delay, gain_den);
 		if (!acked)
 			return;
 	} else {
@@ -276,21 +316,19 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
     /**************** slowdown phase ***********/
 	/* This allows to eventually define new filters for the current delay. */
-	current_delay =
-	    ((s64) ledbat_current_delay(ledbat, &ledbat_min_circ_buff));
-	base_delay = ((s64) ledbat_base_delay(ledbat));
-
+	current_delay = ((s64) ledbat_current_delay(ledbat, &ledbat_min_circ_buff));	
 	queue_delay = current_delay - base_delay;
     offset=1;
     if(queue_delay <= target)
     {
-        offset *= gain_num * target * ledbat_pp_ai_const_den;
+        offset = target * ledbat_pp_ai_const_den;
 	    //do_div(offset, gain_den);
     }
     else{
         offset = ((s64) target) - (queue_delay);
         offset*= ledbat_pp_ai_const_num * tp->snd_cwnd;
-        offset+= (gain_num * target * ledbat_pp_ai_const_den);
+        offset+= (target * ledbat_pp_ai_const_den);
+		offset = max(offset, (-1 * ((s64)(tp->snd_cwnd >> 1))* gain_den* target * ledbat_pp_ai_const_den));
     }
 	/* Do not ramp more than TCP. */
 	if (offset > target * gain_den * ledbat_pp_ai_const_den)
@@ -305,8 +343,8 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 #endif
 
 	/* calculate the new cwnd_cnt */
-	cwnd = ledbat->snd_cwnd_cnt + offset;
-	if (cwnd >= 0) {
+	cwnd = ledbat->snd_cwnd_cnt + offset*acked;
+	if (cwnd > 0) {
 		/* if we have a positive number update the cwnd_count */
 		ledbat->snd_cwnd_cnt = cwnd;
 		if (ledbat->snd_cwnd_cnt >= max_cwnd) {

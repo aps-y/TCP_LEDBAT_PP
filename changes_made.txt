@@ -1,0 +1,6 @@
+1) added new global variables ledbat_pp_constant_num, ledbat_pp_constant_den, and min_cwnd
+2) updated struct ledbat and added new variables first_ss, next_slowdown, slowdown_start
+3) added a new state to enum tcp_ledbat_state - LEDBAT_SLOWDOWN
+4) create modified slow_start function - tcp_ledbat_slow_start()
+
+) using the function tcp_in_slow_start() to check if tcp will go into slow start or not
