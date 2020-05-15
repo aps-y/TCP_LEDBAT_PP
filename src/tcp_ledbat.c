@@ -181,6 +181,8 @@ static
 u32 tcp_ledbat_ssthresh(struct sock *sk)
 {
 	u32 res;
+	const struct ledbat *ledbat  = inet_csk_ca(sk);
+	ledbat->flag &= ~LEDBAT_SLOWDOWN;
 	switch (do_ss) {
 	case DO_NOT_SLOWSTART:
 	case DO_SLOWSTART:
@@ -449,6 +451,7 @@ static void tcp_ledbat_pkts_acked(struct sock *sk,
 	        printk(KERN_DEBUG "resetting snd_cwnd tcp_time_stamp(tp) %u, last_ack %u, srtt %lu\n",
 				tcp_time_stamp(tp), ledbat->last_ack, (tp->srtt_us>>3)/(USEC_PER_SEC/TCP_TS_HZ));
 		tp->snd_cwnd = min_cwnd;
+		ledbat->flag &= ~LEDBAT_SLOWDOWN;
 	}
 	ledbat->last_ack = tcp_time_stamp(tp);
 
