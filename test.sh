@@ -27,6 +27,7 @@ sudo ip netns add snd
 sudo ip netns add router
 sudo ip netns add snbg
 
+sudo ip netnt exec snd sysctl -w net.ipv4.tcp_congestion_control=ledbat
 
 sudo ip link add ethSRo type veth peer name ethRoS
 sudo ip link add ethReRo type veth peer name ethRoRe
@@ -64,4 +65,5 @@ sudo ip netns exec recv ip route add default via 10.0.2.2 dev ethReRo
 sudo ip netns exec snbg ip route add default via 10.0.3.2 dev ethSbRo
 
 sudo ip netns exec router sysctl -w net.ipv4.ip_forward=1
+
 
