@@ -322,7 +322,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			   ledbat->slowdown_start, tp->snd_cwnd, ledbat->next_slowdown);
 	}
 
-    if((after(tcp_time_stamp(tp), ledbat->next_slowdown))
+    if((after(tcp_time_stamp(tp), ledbat->next_slowdown)))
     {
         ledbat->slowdown_start = tcp_time_stamp(tp);
         ledbat->flag |= LEDBAT_SLOWDOWN;

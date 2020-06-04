@@ -66,7 +66,8 @@ sudo ip netns exec snbg ip route add default via 10.0.3.2 dev ethSbRo
 
 sudo ip netns exec router sysctl -w net.ipv4.ip_forward=1
 
-sudo ip netns exec router tc qdisc add dev ethRoRe root handle 1:0 netem delay 70ms 60ms
-sudo ip netns exec router tc qdisc add dev ethRoRe parent 1:1 handle 10:0 tbf limit 1000m rate 1000mbps burst 1000m
+#sudo ip netns exec router tc qdisc add dev ethRoRe root handle 1:0 netem delay 70ms 60ms
+sudo ip netns exec router tc qdisc add dev ethRoRe root handle 1:0 tbf limit 1000m rate 100mbps burst 1000m
+sudo ip netns exec router tc qdisc add dev ethRoRe parent 1:1 handle 100:0 netem loss 0.01%
 #  "-P 3" option is available for parallel connections
 
