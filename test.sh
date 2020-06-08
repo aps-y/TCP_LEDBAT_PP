@@ -73,7 +73,8 @@ sudo ip netns exec router tc qdisc add dev ethRoRe root handle 1:0 netem delay 7
 sudo ip netns exec router tc qdisc add dev ethRoRe parent 1:1 handle 10:0 tbf limit 500m rate 50mbps burst 50m
 sudo ip netns exec router tc qdisc add dev ethRoRe parent 10:1 handle 100:0 netem loss 0.01%
 
-# sudo ip netns exec router tc qdisc add dev ethRoRe root tbf limit 500m rate 50mbps burst 50m
+# sudo ip netns exec router tc qdisc add dev ethRoRe root handle 1:0 tbf limit 500m rate 50mbps burst 50m
+# udo ip netns exec router tc qdisc add dev ethRoRe parent 1:1 handle 10:0 netem loss 0.01%
 
 #snd 10.0.1._
 #snbg 10.0.3._
