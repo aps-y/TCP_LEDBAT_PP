@@ -8,3 +8,4 @@ src/tcp_ledbat.mod
 src/tcp_ledbat.mod.c
 src/tcp_ledbat.mod.o
 src/tcp_ledbat.o
+.vscode
