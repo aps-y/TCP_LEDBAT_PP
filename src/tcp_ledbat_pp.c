@@ -271,7 +271,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (!tcp_is_cwnd_limited(sk))
 		return;
 
-    if(ledbat->flag & LEDBAT_SLOWDOWN)
+    if(ledbat->flag & LEDBAT_SLOWDOWN && (!after(tcp_time_stamp(tp), ledbat->slowdown_start + 2*rtt)))
     {
         tp->snd_cwnd = min_cwnd;
 		#if DEBUG_SLOWDOWN
@@ -279,7 +279,6 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		       "LEDBAT: 2) SLOWDOWN!!! clamp %d cwnd %d sshthresh %d \n",
 		       tp->snd_cwnd_clamp, tp->snd_cwnd, tp->snd_ssthresh);
 		#endif
-        if(!after(tcp_time_stamp(tp), ledbat->slowdown_start + 2*rtt))
         return;
     }
 
