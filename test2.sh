@@ -36,7 +36,7 @@ sudo ip netns add router1
 sudo ip netns add router2
 sudo ip netns add snbg
 
-sudo ip netns exec snbg sysctl -w net.ipv4.tcp_congestion_control=ledbat
+sudo ip netns exec snbg sysctl -w net.ipv4.tcp_congestion_control=ledbat_pp
 
 sudo ip link add ethSR1 type veth peer name ethR1S
 sudo ip link add ethR1R2 type veth peer name ethR2R1

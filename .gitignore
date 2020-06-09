@@ -1,11 +1,4 @@
-src/.tcp_ledbat.ko.cmd
-src/.tcp_ledbat.mod.cmd
-src/.tcp_ledbat.mod.o.cmd
-src/.tcp_ledbat.o.cmd
-src/modules.order
-src/tcp_ledbat.ko
-src/tcp_ledbat.mod
-src/tcp_ledbat.mod.c
-src/tcp_ledbat.mod.o
-src/tcp_ledbat.o
+src/*
+!src/Makefile
+!src/tcp_ledbat_pp.c
 .vscode

@@ -27,7 +27,7 @@ sudo ip netns add snd
 sudo ip netns add router
 sudo ip netns add snbg
 
-sudo ip netns exec snbg sysctl -w net.ipv4.tcp_congestion_control=ledbat
+sudo ip netns exec snbg sysctl -w net.ipv4.tcp_congestion_control=ledbat_pp
 
 sudo ip link add ethSRo type veth peer name ethRoS
 sudo ip link add ethReRo type veth peer name ethRoRe
