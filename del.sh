@@ -34,4 +34,4 @@ then
     sudo ip netns del router2
 fi
 
-sudo rmmod tcp_ledbat
+sudo rmmod tcp_ledbat_pp
