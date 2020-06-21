@@ -1,15 +1,3 @@
-/*
- * TCP-LEDBAT
- * Implement the congestion control algorithm described in
- * the internet draft on LEDBAT++ available at
- * https://tools.ietf.org/html/draft-balasubramanian-iccrg-ledbatplusplus-01
- *
- * Using the implementation of TCP LEDBAT by Silvio Valenti available at
- * https://github.com/pwilloughby/TCP-LEDBAT/tree/5.3
- *
- * Created by Avdhesh Pratap Singh Yadav, Dodiya Parth Hiteshbhai, Agja Dhruv Shaileshkumar
- */
-
 #include <linux/module.h>
 #include <net/tcp.h>
 #include <linux/vmalloc.h>
@@ -48,11 +36,11 @@ module_param(do_ss, int, 0644);
 MODULE_PARM_DESC(do_ss, "do slow start: 0 no, 1 yes, 2 with_ssthresh");
 module_param(ledbat_ssthresh, int, 0644);
 MODULE_PARM_DESC(ledbat_ssthresh, "slow start threshold");
-module_param(ledbat_pp_ai_const_num, int, 0644);
-MODULE_PARM_DESC(ledbat_pp_ai_const_num, "constant value numerator");
-module_param(ledbat_pp_ai_const_den, int, 0644);
-MODULE_PARM_DESC(ledbat_pp_ai_const_num, "constant value denominator");
-module_param(min_cwnd, int, 0644);
+module_param(ledbat_pp_ai_const_num, int, 0644);									//Constants for calculating cwnd
+MODULE_PARM_DESC(ledbat_pp_ai_const_num, "constant value numerator");				//
+module_param(ledbat_pp_ai_const_den, int, 0644);									//
+MODULE_PARM_DESC(ledbat_pp_ai_const_num, "constant value denominator");				//
+module_param(min_cwnd, int, 0644);													//
 MODULE_PARM_DESC(min_cwnd, "minimum cwnd value");
 
 struct owd_circ_buf {
@@ -63,12 +51,7 @@ struct owd_circ_buf {
 	u8 min;
 };
 
-/**
- * enum tcp_ledbat_state
- * @LP_VALID_OWD: are circbuf initalized?
- * @LP_WITHIN_THR: are we within threshold?
- * @LP_WITHIN_INF: are we within inference?
- *
+/*
  * TCP-LEDBAT's state flags.
  * We create this set of state flags mainly for debugging.
  */
@@ -85,10 +68,10 @@ enum tcp_ledbat_state {
 struct ledbat {
 	u32 last_rollover;
 	u32 snd_cwnd_cnt;	/* already in struct tcp_sock but we need 32 bits. */
-	u32 last_ack;
-    u32 next_slowdown;
-    u32 slowdown_start;
-    bool first_ss;
+	u32 last_ack;       
+    u32 next_slowdown;  // Time when the next slowdown will begin
+    u32 slowdown_start; // Time when last/current slowdown started
+    bool first_ss;      // flag to keep track of 1st slowstart
 	struct owd_circ_buf base_history;
 	struct owd_circ_buf noise_filter;
 	u32 flag;
@@ -253,8 +236,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (!(ledbat->flag & LEDBAT_VALID_OWD))
 		return;
 
-	
-	/* calculating gain*/
+	/* calculating gain*/                                                      //This piece code was not working fine
 	// gain_den = 2*target;
     // rem = do_div(gain_den, base_delay);
 	// if(rem)
@@ -265,7 +247,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	// gain_den=1;
 
 	rtt = (tp->srtt_us >> 3)/(USEC_PER_SEC/TCP_TS_HZ);
-	max_cwnd = ((u32) (tp->snd_cwnd)) * target * gain_den * ledbat_pp_ai_const_den;
+	max_cwnd = ((u32) (tp->snd_cwnd)) * target * gain_den * ledbat_pp_ai_const_den;   
 
 	/* 
 	   This checks that we are not limited by the congestion window nor by the
@@ -274,6 +256,9 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	 */
 	if (!tcp_is_cwnd_limited(sk))
 		return;
+
+
+	// if TCP is in slowdown phase then set cwnd = 2
 
     if(ledbat->flag & LEDBAT_SLOWDOWN && (!after(tcp_time_stamp(tp), ledbat->slowdown_start + 2*rtt)))
     {
@@ -307,6 +292,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
     /**************** slowdown phase ***********/
 
+	//First slowstart is over so calculating time of first slowdown
     if(ledbat->first_ss)
     {
         ledbat->next_slowdown = tcp_time_stamp(tp) + 2*(rtt);
@@ -318,6 +304,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		#endif
     }
 
+	//Updating time for next slowdown and leaving slowdown phase
     if( ledbat->flag & LEDBAT_SLOWDOWN)
     {
         ledbat->next_slowdown = tcp_time_stamp(tp) +9*(tcp_time_stamp(tp) - ledbat->slowdown_start);
@@ -329,6 +316,7 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		#endif
 	}
 
+	//Entering next slowdown phase and updating ssthresh
     if((after(tcp_time_stamp(tp), ledbat->next_slowdown)))
     {
         ledbat->slowdown_start = tcp_time_stamp(tp);
