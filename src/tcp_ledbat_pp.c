@@ -15,9 +15,9 @@
 #include <linux/vmalloc.h>
 
 
-#define  DEBUG_SLOW_START    1
-#define  DEBUG_SLOWDOWN	     1
-#define  DEBUG_NORMAL	     1
+#define  DEBUG_SLOW_START    0
+#define  DEBUG_SLOWDOWN	     0
+#define  DEBUG_NORMAL	     0
 #define  DEBUG_DELAY         0
 #define  DEBUG_NOISE_FILTER  0
 #define  DEBUG_BASE_HISTO    0
@@ -240,7 +240,8 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	s64 queue_delay;
 	s64 offset;
 	s64 cwnd;
-	u32 gain_den =1;
+	//u32 rem;
+	u32 gain_den =4;
 	u32 max_cwnd;
 	u32 rtt;
 	s64 current_delay;
@@ -252,13 +253,16 @@ static void tcp_ledbat_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (!(ledbat->flag & LEDBAT_VALID_OWD))
 		return;
 
+	
 	/* calculating gain*/
 	// gain_den = 2*target;
-	// rem = do_div(gain_den, base_delay);
+    // rem = do_div(gain_den, base_delay);
 	// if(rem)
 	// gain_den++;
 	// if(gain_den>16)
 	// gain_den=16;
+	// if(gain_den==0)
+	// gain_den=1;
 
 	rtt = (tp->srtt_us >> 3)/(USEC_PER_SEC/TCP_TS_HZ);
 	max_cwnd = ((u32) (tp->snd_cwnd)) * target * gain_den * ledbat_pp_ai_const_den;
